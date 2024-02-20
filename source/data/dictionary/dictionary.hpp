@@ -16,6 +16,7 @@ namespace data
 
 namespace dictionary
 {
+static dictionary_entry unknown {{attribute::VR::UN}, "UNKNOWN", "UNKNOWN", "*", false};
 
 /**
  * @brief The dictionary class is a facade for the different kind of
@@ -37,7 +38,11 @@ class dictionaries
        * @param datadic_path path toe the data dictionary
        */
       dictionaries(std::string cmddic_path = "commanddictionary.csv",
-                   std::string datadic_path = "datadictionary.csv");
+                   std::string datadic_path = "datadictionary.csv"):
+          commanddic {cmddic_path, dictionary_dyn::MODE::GREEDY},
+          datadic {datadic_path}
+      {
+      }
 
 
       /**
@@ -51,7 +56,15 @@ class dictionaries
        * in case of an error has no constraints and the associated data element
        * can still be processed.
        */
-      dictionary_entry lookup_commanddic(attribute::tag_type tag);
+      dictionary_entry lookup_commanddic(attribute::tag_type tag)
+      {
+          auto entry = commanddic.lookup(tag);
+          if (entry == boost::none) {
+              return unknown;
+          } else {
+              return *entry;
+          }
+      }
 
       /**
        * @brief lookup_datadic performs a dynamic lookup of the given tag in
@@ -59,7 +72,15 @@ class dictionaries
        * @param tag
        * @return dictionary entry corresponding the tag
        */
-      dictionary_entry lookup_datadic(attribute::tag_type tag);
+      dictionary_entry lookup_datadic(attribute::tag_type tag)
+      {
+          auto entry = datadic.lookup(tag);
+          if (entry == boost::none) {
+              return unknown;
+          } else {
+              return *entry;
+          }
+      }
 
       /**
        * @brief lookup performs a lookup in the command dictionary and data
@@ -68,7 +89,24 @@ class dictionaries
        * @param eid element id of the tag
        * @return dictionary entry corresponding the tag
        */
-      dictionary_entry lookup(attribute::tag_type tag);
+      dictionary_entry lookup(attribute::tag_type tag)
+      {
+          try {
+              auto found_entry {commanddic.lookup(tag)};
+              if (found_entry == boost::none) {
+                  auto found_data_entry {datadic.lookup(tag)};
+                  if (found_data_entry == boost::none) {
+                      return unknown;
+                  } else {
+                      return *found_data_entry;
+                  }
+              }
+
+              return *found_entry;
+          } catch (std::exception&) {
+              return unknown;
+          }
+      }
 
       /**
        * @brief lookup_commanddic performs a compile-time lookup of the given tag
@@ -98,8 +136,14 @@ class dictionaries
          return datadictionary<g, e> {};
       }
 
-      dictionary_dyn& get_dyn_commanddic();
-      dictionary_dyn& get_dyn_datadic();
+      dictionary_dyn& get_dyn_commanddic()
+      {
+          return commanddic;
+      }
+      dictionary_dyn& get_dyn_datadic()
+      {
+          return datadic;
+      }
 
    private:
       dictionary_dyn commanddic;
@@ -111,7 +155,11 @@ class dictionaries
  *        dictionaries instance containing the command and data dictionaries.
  * @return dictionary instance
  */
-dictionaries& get_default_dictionaries();
+dictionaries& get_default_dictionaries()
+{
+    static dictionaries dict {"commanddictionary.csv", "datadictionary.csv"};
+    return dict;
+}
 
 
 }

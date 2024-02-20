@@ -20,36 +20,25 @@ namespace upperlayer
 using namespace dicom::util::log;
 
 
-statemachine::statemachine(Istate_trans_ops* ul):
-   ul {ul},
-   state {CONN_STATE::STA1},
-   logger {"upperlayer sm"}
-{
-}
-
-statemachine::CONN_STATE statemachine::get_state()
-{
-   return state;
-}
-
-statemachine::CONN_STATE statemachine::transition(EVENT e)
-{
-   if (transition_table.find({e, state}) != transition_table.end()) {
-      transition_table[{e, state}](this);
-      return state;
-   } else {
-      return CONN_STATE::INV;
-   }
-}
 
 
-void statemachine::aa1()
-{
-   BOOST_LOG_SEV(logger, trace) << "AA-1";
-   BOOST_LOG_SEV(logger, trace) << "Next state is Sta13";
-   ul->queue_for_write_w_prio(std::unique_ptr<property>(new a_abort {}));
-   state = CONN_STATE::STA13;
-}
+// statemachine::CONN_STATE statemachine::get_state()
+// {
+//    return state;
+// }
+
+// statemachine::CONN_STATE statemachine::transition(EVENT e)
+// {
+//    if (transition_table.find({e, state}) != transition_table.end()) {
+//       transition_table[{e, state}](this);
+//       return state;
+//    } else {
+//       return CONN_STATE::INV;
+//    }
+// }
+
+
+
 
 void statemachine::aa2()
 {

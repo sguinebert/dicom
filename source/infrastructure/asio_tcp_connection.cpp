@@ -37,51 +37,52 @@ Iinfrastructure_upperlayer_connection::~Iinfrastructure_upperlayer_connection()
 
 }
 
-asio_tcp_connection::asio_tcp_connection(boost::asio::io_service& ioservice,
+tcpconnection::tcpconnection(asio::io_context& ctx,
                                          std::shared_ptr<boost::asio::ip::tcp::socket> sock,
-                                         std::function<void(asio_tcp_connection*)> on_end_connection):
-   io_s {ioservice},
-   socket {sock},
+                             std::function<void(tcpconnection*)> on_end_connection):
+    ctx_ {ctx},
+    socket_(ctx),
+    skt {sock},
    handler_end_connection {on_end_connection}
 {
 
 }
 
-void asio_tcp_connection::write_data(std::shared_ptr<std::vector<unsigned char>> buffer,
+void tcpconnection::write_data(std::shared_ptr<std::vector<unsigned char>> buffer,
                                      std::function<void (const boost::system::error_code&, std::size_t)> on_complete)
 {
-   boost::asio::async_write(*socket, boost::asio::buffer(*buffer), on_complete);
+    boost::asio::async_write(*skt, boost::asio::buffer(*buffer), on_complete);
 }
 
-void asio_tcp_connection::write_data(void* data_offset, std::size_t len,
+void tcpconnection::write_data(void* data_offset, std::size_t len,
                                      std::function<void (const boost::system::error_code&, std::size_t)> on_complete)
 {
-   boost::asio::async_write(*socket, boost::asio::buffer(data_offset, len), on_complete);
+    boost::asio::async_write(*skt, boost::asio::buffer(data_offset, len), on_complete);
 }
 
-void asio_tcp_connection::read_data(std::shared_ptr<std::vector<unsigned char>> buffer,
+void tcpconnection::read_data(std::shared_ptr<std::vector<unsigned char>> buffer,
                                     std::size_t len,
                                     std::function<void(const boost::system::error_code&, std::size_t)> on_complete)
 {
-   boost::asio::async_read(*socket, boost::asio::buffer(*buffer), boost::asio::transfer_exactly(len), on_complete);
+    boost::asio::async_read(*skt, boost::asio::buffer(*buffer), boost::asio::transfer_exactly(len), on_complete);
 }
 
-void asio_tcp_connection::read_data(std::shared_ptr<std::vector<unsigned char>> buffer,
+void tcpconnection::read_data(std::shared_ptr<std::vector<unsigned char>> buffer,
                                     std::function<void(const boost::system::error_code&, std::size_t)> on_complete)
 {
-   boost::asio::async_read(*socket, boost::asio::buffer(*buffer), on_complete);
+    boost::asio::async_read(*skt, boost::asio::buffer(*buffer), on_complete);
 }
 
-std::unique_ptr<Iinfrastructure_timeout_connection> asio_tcp_connection::timeout_timer(std::chrono::duration<int> timeout, std::function<void()> on_timeout)
+std::unique_ptr<Iinfrastructure_timeout_connection> tcpconnection::timeout_timer(std::chrono::duration<int> timeout, std::function<void()> on_timeout)
 {
-   return std::unique_ptr<Iinfrastructure_timeout_connection> { new timeout_connection {io_s, timeout, on_timeout}};
+    return std::unique_ptr<Iinfrastructure_timeout_connection> { new timeout_connection {ctx_, timeout, on_timeout}};
 }
 
-void asio_tcp_connection::close()
+void tcpconnection::close()
 {
-   io_s.post([this]() {
-      socket->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
-      socket->close();
+    ctx_.post([this]() {
+        skt->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
+        skt->close();
       handler_end_connection(this);
    });
 }

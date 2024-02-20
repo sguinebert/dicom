@@ -17,12 +17,22 @@ namespace network
 struct connection
 {
    public:
-      connection(std::string calling_ae,
-                 std::string called_ae,
-                 std::string host,
-                 short port = 104);
+    connection(std::string calling_ae,
+               std::string called_ae,
+               std::string host,
+               short port = 104):
+        calling_ae {calling_ae},
+        called_ae {called_ae},
+        host {host},
+        port {port}
+    {
+    }
 
-      connection();
+       connection():
+           connection("", "", "")
+       {
+
+       }
 
       std::string calling_ae;
       std::string called_ae;

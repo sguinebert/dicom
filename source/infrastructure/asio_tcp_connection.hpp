@@ -10,6 +10,8 @@
 #include <memory>
 #include <chrono>
 
+using namespace boost;
+
 //struct Iinfrastructure_upperlayer_connection;
 
 /**
@@ -124,15 +126,20 @@ struct Iinfrastructure_upperlayer_connection
 };
 
 /**
- * @brief The asio_tcp_connection class encapsulates functionality to
+ * @brief The tcpconnection class encapsulates functionality to
  * communicate over a TCP socket using boost asio.
  */
-class asio_tcp_connection : public Iinfrastructure_upperlayer_connection
+class tcpconnection : public std::enable_shared_from_this<tcpconnection>, public Iinfrastructure_upperlayer_connection
 {
    public:
-      asio_tcp_connection(boost::asio::io_service& io_svc,
+    tcpconnection(asio::io_context& ctx) :
+           ctx_(ctx),
+           socket_(ctx)
+       {}
+
+    tcpconnection(asio::io_context& ctx,
                           std::shared_ptr<boost::asio::ip::tcp::socket> sock,
-                          std::function<void(asio_tcp_connection*)> on_end_connection);
+                     std::function<void(tcpconnection*)> on_end_connection);
 
       void write_data(std::shared_ptr<std::vector<unsigned char>> buffer,
                       std::function<void(const boost::system::error_code&, std::size_t)> on_complete) override;
@@ -152,16 +159,45 @@ class asio_tcp_connection : public Iinfrastructure_upperlayer_connection
 
       bool is_stopped() const override
       {
-         return io_s.stopped();
+          return ctx_.stopped();
       }
 
       void close() override;
 
-    private:
-      boost::asio::io_service& io_s;
-      std::shared_ptr<boost::asio::ip::tcp::socket> socket;
+      asio::awaitable<void> run(auto /*sft*/)
+      {
+        auto len = buffer_.size();
 
-      std::function<void(asio_tcp_connection*)> handler_end_connection;
+        //co_await asio::async_read(socket_, asio::buffer(buffer_), asio::transfer_exactly(len), asio::use_awaitable);
+
+        auto rsize = co_await asio::async_read(socket_, asio::buffer(buffer_), asio::use_awaitable);
+
+        co_return;
+      }
+
+      asio::awaitable<void> wathdog() {
+          auto executor = co_await asio::this_coro::executor;
+          for(;;) {
+
+          }
+          co_return;
+      }
+
+      void start(std::shared_ptr<tcpconnection> sft)
+      {
+          co_spawn(ctx_, run(sft->shared_from_this()), asio::detached);
+      }
+
+      asio::ip::tcp::socket& socket() { return socket_; }
+
+    private:
+      asio::io_context& ctx_;
+      asio::ip::tcp::socket socket_;
+      std::shared_ptr<boost::asio::ip::tcp::socket> skt;
+
+      std::vector<unsigned char> buffer_;
+
+      std::function<void(tcpconnection*)> handler_end_connection;
 };
 
 #endif // ASIO_TCP_CONNECTION_HPP

@@ -23,9 +23,6 @@ namespace network
 namespace upperlayer
 {
 
-void run();
-
-
 /**
  * @brief The Iupperlayer_connection_handlers struct defines an interface to inject callbacks
  *        for the start / termination of a connection.
@@ -68,31 +65,80 @@ struct Iupperlayer_connection_handlers
 class scp: public Iupperlayer_connection_handlers
 {
    public:
-      scp(Iinfrastructure_server_acceptor& infrstr_scp,
-          data::dictionary::dictionaries& dict);
+    scp(Iinfrastructure_server_acceptor& infrstr_scp,
+        data::dictionary::dictionaries& dict):
+        acceptor {infrstr_scp},
+        dict {dict},
+        logger {"scp"}
+    {
+        acceptor.set_handler_new([this](Iinfrastructure_upperlayer_connection* conn) { accept_new(conn);});
+        acceptor.set_handler_end([this](Iinfrastructure_upperlayer_connection* conn) { connection_end(conn);});
+    }
       scp(const scp&) = delete;
       scp& operator=(const scp&) = delete;
 
-      ~scp();
+      ~scp()
+      {
+      }
 
       /**
        * @brief run() instructs the server to start listening for associations
        */
-      virtual void run() override;
+      virtual void run() override
+      {
+          acceptor.start();
+      }
 
-      virtual void new_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override;
-      virtual void end_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override;
-      virtual void connection_error(std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> handler) override;
+      virtual void new_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override
+      {
+          handler_new_connection = handler;
+      }
+      virtual void end_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override
+      {
+          handler_end_connection = handler;
+      }
+      virtual void connection_error(std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> handler) override
+      {
+          handler_error = handler;
+      }
 
    private:
 
       std::map<Iinfrastructure_upperlayer_connection*, std::unique_ptr<scp_connection>> scps;
 
-      void accept_new(Iinfrastructure_upperlayer_connection* conn);
+       void accept_new(Iinfrastructure_upperlayer_connection* conn)
+       {
+           scps[conn] = std::unique_ptr<scp_connection>
+               {
+                   new scp_connection {conn, dict, handler_new_connection, handler_end_connection, [&](Iupperlayer_comm_ops* conn, std::exception_ptr exception) { this->error_handler(conn, exception); }}
+               };
+           BOOST_LOG_SEV(logger, info) << "New connection" << conn;
+       }
 
-      void error_handler(Iupperlayer_comm_ops* conn, std::exception_ptr exception);
+      void error_handler(Iupperlayer_comm_ops* conn, std::exception_ptr exception)
+      {
+          try {
+              if (exception) {
+                  std::rethrow_exception(exception);
+              }
+          } catch (std::exception& exc) {
+              BOOST_LOG_SEV(logger, error) << "Error occured on connection " << conn
+                                           << "Error message: " << exc.what();
+          }
+          if (handler_error)
+          {
+              handler_error(conn, exception);
+          }
+      }
 
-      void connection_end(Iinfrastructure_upperlayer_connection* conn);
+      void connection_end(Iinfrastructure_upperlayer_connection* conn)
+      {
+          auto& sc = scps.at(conn);
+          handler_end_connection(sc.get());
+          //sc->reset();
+          scps.erase(conn);
+          BOOST_LOG_SEV(logger, info) << "Connection ended" << conn;
+      }
 
       std::function<void(Iupperlayer_comm_ops*)> handler_new_connection;
       std::function<void(Iupperlayer_comm_ops*)> handler_end_connection;
@@ -110,35 +156,87 @@ class scp: public Iupperlayer_connection_handlers
 class scu: public Iupperlayer_connection_handlers
 {
    public:
-      scu(Iinfrastructure_client_acceptor& infr_scu,
-          data::dictionary::dictionaries& dict,
-          a_associate_rq& rq);
+    scu(Iinfrastructure_client_acceptor& infr_scu,
+        data::dictionary::dictionaries& dict,
+        a_associate_rq& rq):
+        acceptor {infr_scu},
+        request {rq},
+        dict {dict},
+        logger {"scu"}
+    {
+        using namespace std::placeholders;
+        acceptor.set_handler_new([this](Iinfrastructure_upperlayer_connection* conn) { accept_new(conn);});
+        acceptor.set_handler_end([this](Iinfrastructure_upperlayer_connection* conn) { connection_end(conn);});
+    }
       scu(const scu&) = delete;
       scu& operator=(const scu&) = delete;
 
-      ~scu();
+      ~scu()
+      {
+      }
 
       /**
        * @brief run() instructs to client to start transmitting
        */
-      virtual void run() override;
+      virtual void run() override
+      {
+          acceptor.run();
+      }
 
       /**
        * @brief accept_new starts a new association with the parameters
        *        specified in the constructor.
        */
-      void accept_new();
+      void accept_new()
+      {
+          acceptor.accept_new_conn();
+      }
 
-      virtual void new_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override;
-      virtual void end_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override;
-      virtual void connection_error(std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> handler) override;
+      virtual void new_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override
+      {
+          handler_new_connection = handler;
+      }
+      virtual void end_connection(std::function<void(Iupperlayer_comm_ops*)> handler) override
+      {
+          handler_end_connection = handler;
+      }
+      virtual void connection_error(std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> handler) override
+      {
+          handler_error = handler;
+      }
 
    private:
-      void accept_new(Iinfrastructure_upperlayer_connection* conn);
+      void accept_new(Iinfrastructure_upperlayer_connection* conn)
+      {
+          scus[conn] = std::unique_ptr<scu_connection> {new scu_connection {conn, dict, request, handler_new_connection, handler_end_connection, [&](Iupperlayer_comm_ops* conn, std::exception_ptr exception) { this->error_handler(conn, exception); }}};
+          BOOST_LOG_SEV(logger, info) << "New connection " << conn;
+      }
 
-      void error_handler(Iupperlayer_comm_ops* conn, std::exception_ptr exception);
+       void error_handler(Iupperlayer_comm_ops* conn, std::exception_ptr exception)
+       {
+           try {
+               if (exception) {
+                   std::rethrow_exception(exception);
+               }
+           } catch (std::exception& exc) {
+               BOOST_LOG_SEV(logger, error) << "Error occured on connection " << conn
+                                            << "Error message: " << exc.what();
+           }
 
-      void connection_end(Iinfrastructure_upperlayer_connection* conn);
+           if (handler_error)
+           {
+               handler_error(conn, exception);
+           }
+       }
+
+       void connection_end(Iinfrastructure_upperlayer_connection* conn)
+       {
+           auto& sc = scus.at(conn);
+           handler_end_connection(sc.get());
+           //sc->reset();
+           scus.erase(conn);
+           BOOST_LOG_SEV(logger, info) << "Connection ended" << conn;
+       }
 
       std::function<void(Iupperlayer_comm_ops*)> handler_new_connection;
       std::function<void(Iupperlayer_comm_ops*)> handler_end_connection;

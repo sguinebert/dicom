@@ -6,7 +6,11 @@
 #include <queue>
 #include <memory>
 
+#include "upperlayer_properties.hpp"
+//#include "upperlayer_connection.hpp"
+
 #include "util/channel_sev_logger.hpp"
+using namespace dicom::util::log;
 
 namespace dicom
 {
@@ -67,22 +71,68 @@ class statemachine
          UNRECOG_PDU
       };
 
-      statemachine(Istate_trans_ops* ul);
+      statemachine(Istate_trans_ops* ul):
+          ul {ul},
+          state {CONN_STATE::STA1},
+          logger {"upperlayer sm"}
+      {
+      }
 
-      CONN_STATE get_state();
-      CONN_STATE transition(EVENT e);
+      CONN_STATE get_state()
+      {
+          return state;
+      }
+      CONN_STATE transition(EVENT e)
+      {
+          if (transition_table.find({e, state}) != transition_table.end()) {
+              transition_table[{e, state}](this);
+              return state;
+          } else {
+              return CONN_STATE::INV;
+          }
+      }
 
    private:
       Istate_trans_ops* ul;
       CONN_STATE state;
 
-      void aa1(); void aa2(); void aa3(); void aa4();
-      void aa5(); void aa6(); void aa7(); void aa8();
-      void ae1(); void ae2(); void ae3(); void ae4();
-      void ae5(); void ae6(); void ae7(); void ae8();
-      void ar1(); void ar2(); void ar3(); void ar4();
-      void ar5(); void ar6(); void ar7(); void ar8();
-      void ar9(); void ar10();
+      void aa1()
+      {
+          BOOST_LOG_SEV(logger, trace) << "AA-1";
+          BOOST_LOG_SEV(logger, trace) << "Next state is Sta13";
+          ul->queue_for_write_w_prio(std::unique_ptr<property>(new a_abort {}));
+          state = CONN_STATE::STA13;
+      }
+      void aa2();
+      void aa3();
+      void aa4();
+
+      void aa5();
+      void aa6();
+      void aa7();
+      void aa8();
+
+      void ae1();
+      void ae2();
+      void ae3();
+      void ae4();
+
+      void ae5();
+      void ae6();
+      void ae7();
+      void ae8();
+
+      void ar1();
+      void ar2();
+      void ar3();
+      void ar4();
+      void ar5();
+      void ar6();
+      void ar7();
+      void ar8();
+      void ar9();
+      void ar10();
+
       void dt1();
       void dt2();
 

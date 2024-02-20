@@ -38,7 +38,10 @@ class SOP_class
    public:      
       SOP_class(std::string SOP_class_UID,
                 std::map<data::dataset::DIMSE_SERVICE_GROUP,
-                  std::function<void(dimse_pm* pm, data::dataset::commandset_data cdata, std::unique_ptr<data::dataset::iod> data)>> handler);
+                  std::function<void(dimse_pm* pm, data::dataset::commandset_data cdata, std::unique_ptr<data::dataset::iod> data)>> handler)
+       {
+       }
+
 
       /**
        * @brief operator() is called by the DIMSE protocol machine to notify the
@@ -48,16 +51,32 @@ class SOP_class
        */
       void operator()(dimse_pm* pm, data::dataset::DIMSE_SERVICE_GROUP op,
                           data::dataset::commandset_data cdata,
-                          std::unique_ptr<data::dataset::iod> data) const;
+                          std::unique_ptr<data::dataset::iod> data) const
+      {
+          operations.at(op)(pm, std::move(cdata), std::move(data));
+      }
 
-      std::string get_SOP_class_UID() const;
+
+      std::string get_SOP_class_UID() const
+      {
+          return sop_uid;
+      }
 
       /**
        * @brief get_service_groups retrieves the service groups defined for this
        *        instance's SOP.
        * @return set of service groups associated to the SOP
        */
-      std::set<data::dataset::DIMSE_SERVICE_GROUP> get_service_groups() const;
+      std::set<data::dataset::DIMSE_SERVICE_GROUP> get_service_groups() const
+      {
+          using namespace data::dataset;
+
+          std::set<DIMSE_SERVICE_GROUP> dsgs;
+          for (auto kv : operations) {
+              dsgs.insert(kv.first);
+          }
+          return dsgs;
+      }
 
    private:
       const std::string sop_uid;

@@ -331,6 +331,16 @@ class vmtype
          return iterator_t<false> {this, value_sequence.size()};
       }
 
+      const_iterator begin() const
+      {
+          return iterator_t<true> {this};
+      }
+
+      const_iterator end() const
+      {
+          return iterator_t<true> {this, value_sequence.size()};
+      }
+
       const_iterator cbegin() const
       {
          return iterator_t<true> {this};
@@ -511,9 +521,32 @@ bool operator!=(const vmtype<T>& a, const vmtype<T>& b)
    return !(a==b);
 }
 
-std::ostream& operator<<(std::ostream& os, vmtype<std::string> data);
+std::ostream& operator<<(std::ostream& os, vmtype<std::string> data)
+{
+    bool more_elements = false;
+    for (const auto& field : data) {
+        if (more_elements) {
+            os << static_cast<char>(0x5c);
+        }
+        os << field;
+        more_elements = data.size() > 1;
+    }
+    return os;
+}
 
-std::ostream& operator<<(std::ostream& os, const vmtype<attribute::tag_type> tag);
+std::ostream& operator<<(std::ostream& os, const vmtype<attribute::tag_type> tag)
+{
+    std::ios state(nullptr);
+    state.copyfmt(os);
+
+    for (const auto& ctag : tag)
+    {
+        os << ctag;
+    }
+
+    os.copyfmt(state);
+    return os;
+}
 
 template <typename T, typename = typename std::enable_if<std::is_integral<T>::value>::type>
 std::ostream& operator<<(std::ostream& os, vmtype<T> data)
