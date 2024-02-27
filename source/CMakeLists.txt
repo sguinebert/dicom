@@ -30,7 +30,10 @@ if(Boost_FOUND)
        network/upperlayer/upperlayer.hpp network/upperlayer/upperlayer_connection.hpp network/upperlayer/upperlayer_properties.hpp network/upperlayer/upperlayer_statemachine.hpp
        network/upperlayer/upperlayer.hpp network/upperlayer/upperlayer_connection.hpp network/upperlayer/upperlayer_properties.hpp network/upperlayer/upperlayer_statemachine.hpp
        util/channel_sev_logger.hpp util/uid.hpp
-       serviceclass/find_scu.hpp serviceclass/queryretrieve_scp.hpp serviceclass/serviceclass.hpp serviceclass/storage_scp.hpp serviceclass/storage_scu.hpp serviceclass/worklist_scp.hpp)
+       serviceclass/find_scu.hpp serviceclass/queryretrieve_scp.hpp serviceclass/serviceclass.hpp serviceclass/storage_scp.hpp serviceclass/storage_scu.hpp serviceclass/worklist_scp.hpp
+       network/upperlayer/Connection.hpp
+       infrastructure/dicomconnection.h
+       data/dataset/tools.h)
    target_include_directories(libdicompp
        PUBLIC $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
    target_include_directories(libdicompp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} PUBLIC ${Boost_INCLUDE_DIRS})

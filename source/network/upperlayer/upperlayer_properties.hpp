@@ -8,43 +8,7 @@
 #include <ostream>
 #include <cassert>
 
-using uchar = unsigned char;
-
-std::size_t be_char_to_16b(std::vector<uchar> bs)
-{
-    assert(bs.size() == 2);
-    std::size_t sz = 0;
-    sz |= (static_cast<std::size_t>(bs[0]) << 8);
-    sz |= (static_cast<std::size_t>(bs[1]));
-    return sz;
-}
-std::size_t be_char_to_32b(std::vector<uchar> bs)
-{
-    assert(bs.size() == 4);
-    std::size_t sz = 0;
-    sz |= (static_cast<std::size_t>(bs[0]) << 24);
-    sz |= (static_cast<std::size_t>(bs[1]) << 16);
-    sz |= (static_cast<std::size_t>(bs[2]) << 8);
-    sz |= (static_cast<std::size_t>(bs[3]));
-    return sz;
-}
-std::vector<uchar> ui_to_16b_be(unsigned val)
-{
-    std::vector<unsigned char> be_val(2);
-    be_val[0] = ((val & 0xFF00) >> 8);
-    be_val[1] = (val & 0xFF);
-    return be_val;
-}
-std::vector<uchar> ui_to_32b_be(unsigned val)
-{
-    std::vector<unsigned char> be_val(4);
-    be_val[0] = ((val & 0xFF000000) >> 24);
-    be_val[1] = ((val & 0xFF0000)) >> 16;
-    be_val[2] = ((val & 0xFF00) >> 8);
-    be_val[3] = (val & 0xFF);
-    return be_val;
-}
-
+#include "data/dataset/tools.h"
 
 namespace dicom
 {
@@ -111,7 +75,7 @@ struct p_data_tf: property
         bool pdvs_left = true;
         while (pdvs_left || pos < pdu.size()-1) {
             pos += 6;
-            std::size_t pdv_len = be_char_to_32b({pdu.begin()+pos, pdu.begin()+pos+4});
+            std::size_t pdv_len = be_char_to_32b({pdu.begin() + pos, pdu.begin() + pos + 4});
             pos += 4;
             pres_context_id = pdu[pos];
 

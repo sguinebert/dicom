@@ -214,6 +214,105 @@ static std::vector<unsigned char> encode_float_array_be(const std::vector<FT>& s
     return buf;
 }
 
+/**
+ * @brief decode_tag_little_endian transforms the serialized tag data into a
+ *        structured form.
+ * @param data serialized stream data
+ * @param begin beginning, as in absolute position from the data stream start,
+ *        of the value field
+ * @return instance of tag_type with the tag elements
+ */
+tag_type decode_tag_little_endian(const std::vector<unsigned char>& data, std::size_t begin)
+{
+    unsigned short gid, eid;
+    convhelper::little_endian_to_integral(data, begin, 2, gid);
+    convhelper::little_endian_to_integral(data, begin+2, 2, eid);
+
+    tag_type tag {gid, eid};
+    return tag;
+}
+
+/**
+ * @brief decode_tag_big_endian transforms the serialized tag data into a
+ *        structured form.
+ * @param data serialized stream data
+ * @param begin beginning, as in absolute position from the data stream start,
+ *        of the value field
+ * @return instance of tag_type with the tag elements
+ */
+tag_type decode_tag_big_endian(const std::vector<unsigned char>& data, std::size_t begin)
+{
+    unsigned short gid, eid;
+    convhelper::big_endian_to_integral(data, begin, 2, gid);
+    convhelper::big_endian_to_integral(data, begin+2, 2, eid);
+
+    tag_type tag {gid, eid};
+    return tag;
+}
+
+/**
+ * @brief decode_tag transforms the serialized tag data into a structured form.
+ * @param data serialized stream data
+ * @param begin beginning, as in absolute position from the data stream start,
+ *        of the value field
+ * @param endianness of the encoded data
+ * @return instance of tag_type with the tag elements
+ */
+tag_type decode_tag(const std::vector<unsigned char>& data, std::size_t begin, ENDIANNESS endianness)
+{
+    if (endianness == ENDIANNESS::LITTLE) {
+        return decode_tag_little_endian(data, begin);
+    } else {
+        return decode_tag_big_endian(data, begin);
+    }
+}
+/**
+ * @brief encode_tag_little_endian converts the element tag into a little endian
+ *        representation of 8 bytes
+ * @param tag tag to be encoded
+ * @return vector of bytes representing the tag in little endian
+ */
+std::vector<unsigned char> encode_tag_little_endian(tag_type tag)
+{
+    std::vector<unsigned char> data;
+    auto group_le = convhelper::integral_to_little_endian(tag.group_id, 2);
+    auto elem_le = convhelper::integral_to_little_endian(tag.element_id, 2);
+    data.insert(data.begin(), elem_le.begin(), elem_le.end());
+    data.insert(data.begin(), group_le.begin(), group_le.end());
+    return data;
+}
+
+/**
+ * @brief encode_tag_big_endian converts the element tag into a big endian
+ *        representation of 8 bytes
+ * @param tag tag to be encoded
+ * @return vector of bytes representing the tag in big endian
+ */
+std::vector<unsigned char> encode_tag_big_endian(tag_type tag)
+{
+    std::vector<unsigned char> data;
+    auto group_le = convhelper::integral_to_big_endian(tag.group_id, 2);
+    auto elem_le = convhelper::integral_to_big_endian(tag.element_id, 2);
+    data.insert(data.begin(), elem_le.begin(), elem_le.end());
+    data.insert(data.begin(), group_le.begin(), group_le.end());
+    return data;
+}
+
+/**
+ * @brief encode_tag converts the element tag into serialized representation of
+ *        8 bytes
+ * @param tag tag to be encoded
+ * @param endianness endianness of the encoded stream
+ * @return vector of bytes representing the tag
+ */
+std::vector<unsigned char> encode_tag(tag_type tag, ENDIANNESS endianness)
+{
+    if (endianness == ENDIANNESS::LITTLE) {
+        return encode_tag_little_endian(tag);
+    } else {
+        return encode_tag_big_endian(tag);
+    }
+}
 static std::vector<unsigned char> encode_tags(const vmtype<tag_type>& tags, ENDIANNESS endianness)
 {
     std::vector<unsigned char> buf;
@@ -334,53 +433,7 @@ static std::vector<FT> decode_float_array_be(const std::vector<unsigned char>& s
     return values;
 }
 
-/**
- * @brief encode_tag_little_endian converts the element tag into a little endian
- *        representation of 8 bytes
- * @param tag tag to be encoded
- * @return vector of bytes representing the tag in little endian
- */
-std::vector<unsigned char> encode_tag_little_endian(tag_type tag)
-{
-    std::vector<unsigned char> data;
-    auto group_le = convhelper::integral_to_little_endian(tag.group_id, 2);
-    auto elem_le = convhelper::integral_to_little_endian(tag.element_id, 2);
-    data.insert(data.begin(), elem_le.begin(), elem_le.end());
-    data.insert(data.begin(), group_le.begin(), group_le.end());
-    return data;
-}
 
-/**
- * @brief encode_tag_big_endian converts the element tag into a big endian
- *        representation of 8 bytes
- * @param tag tag to be encoded
- * @return vector of bytes representing the tag in big endian
- */
-std::vector<unsigned char> encode_tag_big_endian(tag_type tag)
-{
-    std::vector<unsigned char> data;
-    auto group_le = convhelper::integral_to_big_endian(tag.group_id, 2);
-    auto elem_le = convhelper::integral_to_big_endian(tag.element_id, 2);
-    data.insert(data.begin(), elem_le.begin(), elem_le.end());
-    data.insert(data.begin(), group_le.begin(), group_le.end());
-    return data;
-}
-
-/**
- * @brief encode_tag converts the element tag into serialized representation of
- *        8 bytes
- * @param tag tag to be encoded
- * @param endianness endianness of the encoded stream
- * @return vector of bytes representing the tag
- */
-std::vector<unsigned char> encode_tag(tag_type tag, ENDIANNESS endianness)
-{
-    if (endianness == ENDIANNESS::LITTLE) {
-        return encode_tag_little_endian(tag);
-    } else {
-        return encode_tag_big_endian(tag);
-    }
-}
 
 static attribute::vmtype<tag_type> decode_tags(const std::vector<unsigned char>& strdata, std::string vm, ENDIANNESS endianness, std::size_t begin, std::size_t len)
 {
@@ -952,23 +1005,6 @@ std::vector<unsigned char> encode_len(std::size_t lenbytes, std::size_t len, END
         return encode_len_little_endian(lenbytes, len);
     } else {
         return encode_len_big_endian(lenbytes, len);
-    }
-}
-
-/**
- * @brief decode_tag transforms the serialized tag data into a structured form.
- * @param data serialized stream data
- * @param begin beginning, as in absolute position from the data stream start,
- *        of the value field
- * @param endianness of the encoded data
- * @return instance of tag_type with the tag elements
- */
-tag_type decode_tag(const std::vector<unsigned char>& data, std::size_t begin, ENDIANNESS endianness)
-{
-    if (endianness == ENDIANNESS::LITTLE) {
-        return decode_tag_little_endian(data, begin);
-    } else {
-        return decode_tag_big_endian(data, begin);
     }
 }
 

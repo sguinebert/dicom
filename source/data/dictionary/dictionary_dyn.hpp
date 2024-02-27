@@ -5,6 +5,7 @@
 #include <map>
 #include <fstream>
 #include <mutex>
+#include <boost/scope_exit.hpp>
 
 #include "dictionary_entry.hpp"
 

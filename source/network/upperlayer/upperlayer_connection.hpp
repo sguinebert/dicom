@@ -13,6 +13,7 @@
 #include <boost/optional.hpp>
 #include <boost/log/trivial.hpp>
 
+#include "infrastructure/asio_tcp_connection.hpp"
 #include "upperlayer_properties.hpp"
 #include "upperlayer_statemachine.hpp"
 #include "infrastructure/asio_tcp_connection.hpp"
@@ -22,6 +23,8 @@
 #include "util/channel_sev_logger.hpp"
 
 using namespace dicom::util::log;
+using namespace std::literals::chrono_literals;
+using std::chrono::steady_clock;
 
 namespace
 {
@@ -113,13 +116,31 @@ struct Iupperlayer_comm_ops
  * negotiation. This has to be done by the user of this class (either a facade
  * or the DIMSE_PM).
  */
-class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
+class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops, public connection
 {
    public:
-    explicit Connection(data::dictionary::dictionaries& dict,
+    // explicit Connection(data::dictionary::dictionaries& dict,
+    //                     std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
+    //                     std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l):
+    //     statem {this, send_queue},
+    //     error_handler {on_error},
+    //     logger {"upperlayer"},
+    //     proc {data::dataset::commandset_processor {dict}},
+    //     received_pdu {boost::none},
+    //     handlers {},
+    //     shutdown_requested {false}
+    // {
+    //     for (const auto p : l) {
+    //         handlers[p.first] = p.second;
+    //     }
+    // }
+
+
+    explicit Connection(asio::io_context ctx, data::dictionary::dictionaries& dict,
                         std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
                         std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l):
-        statem {this},
+        connection(ctx),
+        statem {this, send_queue},
         error_handler {on_error},
         logger {"upperlayer"},
         proc {data::dataset::commandset_processor {dict}},
@@ -127,15 +148,10 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
         handlers {},
         shutdown_requested {false}
     {
-        for (const auto p : l) {
+        for (const auto& p : l) {
             handlers[p.first] = p.second;
         }
     }
-
-
-    explicit Connection(asio::io_context ctx, data::dictionary::dictionaries& dict,
-                        std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
-                        std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l);
 
 
     Connection(const Connection&) = delete;
@@ -156,7 +172,7 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
        * @return
        * @callgraph
        */
-      statemachine::CONN_STATE get_state()
+      StateMachine::CONN_STATE get_state()
       {
           return statem.get_state();
       }
@@ -261,7 +277,7 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
        */
       void close_connection() override
       {
-          statem.transition(statemachine::EVENT::TRANS_CONN_CLOSED);
+          statem.transition(StateMachine::EVENT::TRANS_CONN_CLOSED);
 
           shutdown_requested = true;
 
@@ -282,7 +298,7 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
 
 
    protected:
-      statemachine statem;
+      StateMachine statem;
 
       /**
        * @brief Connection::do_read reads a pdu asynchronously from the peer
@@ -297,7 +313,7 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
        * contains the code which actually processes the pdu (calls the
        * appropriate handler, manages state transitions, ...)
        */
-      void do_read()
+      asio::awaitable<void> do_read()
       {
           // because the async operations terminate immediately the containers would go out of scope
           // and async_write would write into "unallocated" memory. To prevent this, reference-counting
@@ -308,6 +324,82 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
           auto size = std::make_shared<std::vector<unsigned char>>(6);
           auto rem_data = std::make_shared<std::vector<unsigned char>>();
           auto compl_data = std::make_shared<std::vector<unsigned char>>();
+
+          for(;;) {
+              //auto rsize = co_await asio::async_read(socket_, size, 6, asio::use_awaitable);
+              std::size_t len = be_char_to_32b({size->begin() + 2, size->begin() + 6 });
+              rem_data->resize(len);
+
+              //auto vrsize = co_await asio::async_read(socket_, rem_data, len, asio::use_awaitable);
+              compl_data->reserve(size->size() + rem_data->size());
+              compl_data->insert(compl_data->end(), size->begin(), size->end());
+              compl_data->insert(compl_data->end(), rem_data->begin(), rem_data->end());
+              received_pdu = compl_data.get();
+
+              auto ptype = get_type(*compl_data);
+              BOOST_LOG_SEV(logger, info) << "Received property of type " << ptype;
+              StateMachine::EVENT e;
+              switch (ptype) {
+              case TYPE::A_ABORT:
+                  e = StateMachine::EVENT::RECV_A_ABORT_PDU;
+                  break;
+              case TYPE::A_ASSOCIATE_AC:
+                  e = StateMachine::EVENT::RECV_A_ASSOCIATE_AC_PDU;
+                  break;
+              case TYPE::A_ASSOCIATE_RJ:
+                  e = StateMachine::EVENT::RECV_A_ASSOCIATE_RJ_PDU;
+                  break;
+              case TYPE::A_ASSOCIATE_RQ:
+                  e = StateMachine::EVENT::RECV_A_ASSOCIATE_RQ_PDU;
+                  break;
+              case TYPE::A_RELEASE_RQ:
+                  e = StateMachine::EVENT::RECV_A_RELEASE_RQ_PDU;
+                  break;
+              case TYPE::A_RELEASE_RP:
+                  e = StateMachine::EVENT::RECV_A_RELEASE_RP_PDU;
+                  break;
+              case TYPE::P_DATA_TF:
+                  e = StateMachine::EVENT::RECV_P_DATA_TF_PDU;
+                  break;
+              default:
+                  e = StateMachine::EVENT::UNRECOG_PDU;
+              }
+
+              statem.transition(e); // side effects of the statemachine's transition function
+
+              if (received_pdu != boost::none) {
+                  auto property = make_property(*compl_data);
+                  BOOST_LOG_SEV(logger, debug) << "Property info: \n" << *property;
+
+                  // PDUs of type p_data_tf may come in fragments and with a
+                  // data set, which needs to be received.
+                  if (ptype == TYPE::P_DATA_TF) {
+                      BOOST_LOG_SEV(logger, trace) << "Read data fragment of size " << bytes;
+                      using namespace data::attribute;
+                      auto pdataprop = dynamic_cast<p_data_tf*>(property.get());
+                      assert(pdataprop);
+                      if (!pdataprop->command_set.empty()) {
+                          // check if a dataset is present in the message
+                          auto commandset = proc.deserialize(pdataprop->command_set);
+                          unsigned short datasetpresent;
+                          get_value_field<VR::US>(commandset.at({0x0000, 0x0800}), datasetpresent);
+                          if (datasetpresent != 0x0101) {
+                              BOOST_LOG_SEV(logger, trace) << "Dataset present in the PDU ("
+                                                           << "(0000,0800) = " << datasetpresent << ")";
+                              get_complete_dataset(compl_data);
+                          } else {
+                              handle_pdu(std::move(property), TYPE::P_DATA_TF);
+                          }
+                      } else {
+                          BOOST_LOG_SEV(logger, warning) << "No commandset present in the received data PDU. " <<
+                              "Ignoring Message";
+                      }
+                  } else {
+                      BOOST_LOG_SEV(logger, trace) << "Read PDU of size " << bytes;
+                      handle_pdu(std::move(property), ptype);
+                  }
+              }
+          }
 
 
           connection()->read_data(size, 6, [=](const boost::system::error_code& err, std::size_t bytes)  {
@@ -338,31 +430,31 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
 
                                                   auto ptype = get_type(*compl_data);
                                                   BOOST_LOG_SEV(logger, info) << "Received property of type " << ptype;
-                                                  statemachine::EVENT e;
+                                                  StateMachine::EVENT e;
                                                   switch (ptype) {
                                                   case TYPE::A_ABORT:
-                                                      e = statemachine::EVENT::RECV_A_ABORT_PDU;
+                                                      e = StateMachine::EVENT::RECV_A_ABORT_PDU;
                                                       break;
                                                   case TYPE::A_ASSOCIATE_AC:
-                                                      e = statemachine::EVENT::RECV_A_ASSOCIATE_AC_PDU;
+                                                      e = StateMachine::EVENT::RECV_A_ASSOCIATE_AC_PDU;
                                                       break;
                                                   case TYPE::A_ASSOCIATE_RJ:
-                                                      e = statemachine::EVENT::RECV_A_ASSOCIATE_RJ_PDU;
+                                                      e = StateMachine::EVENT::RECV_A_ASSOCIATE_RJ_PDU;
                                                       break;
                                                   case TYPE::A_ASSOCIATE_RQ:
-                                                      e = statemachine::EVENT::RECV_A_ASSOCIATE_RQ_PDU;
+                                                      e = StateMachine::EVENT::RECV_A_ASSOCIATE_RQ_PDU;
                                                       break;
                                                   case TYPE::A_RELEASE_RQ:
-                                                      e = statemachine::EVENT::RECV_A_RELEASE_RQ_PDU;
+                                                      e = StateMachine::EVENT::RECV_A_RELEASE_RQ_PDU;
                                                       break;
                                                   case TYPE::A_RELEASE_RP:
-                                                      e = statemachine::EVENT::RECV_A_RELEASE_RP_PDU;
+                                                      e = StateMachine::EVENT::RECV_A_RELEASE_RP_PDU;
                                                       break;
                                                   case TYPE::P_DATA_TF:
-                                                      e = statemachine::EVENT::RECV_P_DATA_TF_PDU;
+                                                      e = StateMachine::EVENT::RECV_P_DATA_TF_PDU;
                                                       break;
                                                   default:
-                                                      e = statemachine::EVENT::UNRECOG_PDU;
+                                                      e = StateMachine::EVENT::UNRECOG_PDU;
                                                   }
 
                                                   statem.transition(e); // side effects of the statemachine's transition function
@@ -422,7 +514,37 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
       void artim_expired()
       {
           BOOST_LOG_SEV(this->logger, info) << "ARTIM timer expired";
-          statem.transition(statemachine::EVENT::ARTIM_EXPIRED);
+          statem.transition(StateMachine::EVENT::ARTIM_EXPIRED);
+      }
+
+      // asio::awaitable<void> wathdog() {
+      //     auto executor = co_await asio::this_coro::executor;
+      //     asio::steady_timer timer(executor);
+      //     for(;;) {
+      //         co_await timer.async_wait(asio::use_awaitable);
+      //         if(1)
+      //             break;
+      //     }
+      //     artim_expired();
+      //     co_return;
+      // }
+
+      asio::awaitable<void> watchdog(steady_clock::time_point& deadline)
+      {
+          asio::steady_timer timer(co_await boost::asio::this_coro::executor);
+          deadline = std::max(deadline, steady_clock::now() + 10s);
+
+          auto now = steady_clock::now();
+          while (deadline > now)
+          {
+              timer.expires_at(deadline);
+              //co_await timer.async_wait(asio::bind_cancellation_slot(timer_cancel_.slot(), use_nothrow_awaitable));
+              now = steady_clock::now();
+          }
+          //kill
+          artim_expired();
+          //close();
+          co_return;
       }
 
       std::map<TYPE, std::function<void(Connection*, property*)>> handlers_conf;
@@ -443,34 +565,34 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
            auto pdu = std::make_shared<std::vector<unsigned char>>(p->make_pdu());
            auto ptype = get_type(*pdu);
 
-           statemachine::EVENT e;
+           StateMachine::EVENT e;
            switch (ptype) {
            case TYPE::A_ABORT:
-               e = statemachine::EVENT::LOCL_A_ABORT_PDU;
+               e = StateMachine::EVENT::LOCL_A_ABORT_PDU;
                break;
            case TYPE::A_ASSOCIATE_AC:
-               e = statemachine::EVENT::LOCL_A_ASSOCIATE_AC_PDU;
+               e = StateMachine::EVENT::LOCL_A_ASSOCIATE_AC_PDU;
                break;
            case TYPE::A_ASSOCIATE_RJ:
-               e = statemachine::EVENT::LOCL_A_ASSOCIATE_RJ_PDU;
+               e = StateMachine::EVENT::LOCL_A_ASSOCIATE_RJ_PDU;
                break;
            case TYPE::A_ASSOCIATE_RQ:
                assert(false);
                break;
            case TYPE::A_RELEASE_RQ:
-               e = statemachine::EVENT::LOCL_A_RELEASE_RQ_PDU;
+               e = StateMachine::EVENT::LOCL_A_RELEASE_RQ_PDU;
                break;
            case TYPE::A_RELEASE_RP:
-               e = statemachine::EVENT::LOCL_A_RELEASE_RP_PDU;
+               e = StateMachine::EVENT::LOCL_A_RELEASE_RP_PDU;
                break;
            case TYPE::P_DATA_TF:
-               e = statemachine::EVENT::LOCL_P_DATA_TF_PDU;
+               e = StateMachine::EVENT::LOCL_P_DATA_TF_PDU;
                break;
            default:
-               e = statemachine::EVENT::UNRECOG_PDU;
+               e = StateMachine::EVENT::UNRECOG_PDU;
            }
 
-           if (statem.transition(e) != statemachine::CONN_STATE::INV) {
+           if (statem.transition(e) != StateMachine::CONN_STATE::INV) {
                // call async_write after each sent property until the queue is
                // empty
                if (ptype != TYPE::P_DATA_TF) {
@@ -549,7 +671,7 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
               handlers[ptype](this, std::move(p));
           }
 
-          if (get_state() == statemachine::CONN_STATE::STA13) {
+          if (get_state() == StateMachine::CONN_STATE::STA13) {
               close_connection();
           } else {
               // be ready for new data
@@ -684,7 +806,7 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
        * @brief artim_timer returns a pointer to the artim timer
        * @return referencing pointer to the artim timer
        */
-      virtual Iinfrastructure_timeout_connection* artim_timer() = 0;
+      //virtual Iinfrastructure_timeout_connection* artim_timer() = 0;
 
       data::dataset::commandset_processor proc;
 
@@ -696,120 +818,120 @@ class Connection: public Istate_trans_ops, public Iupperlayer_comm_ops
 
 
    protected:
-      virtual Iinfrastructure_upperlayer_connection* connection() = 0;
+      //virtual Iinfrastructure_upperlayer_connection* connection() = 0;
 
-      std::function<void(Iupperlayer_comm_ops*)> handler_new_connection;
-      std::function<void(Iupperlayer_comm_ops*)> handler_end_connection;
+      // std::function<void(Iupperlayer_comm_ops*)> handler_new_connection;
+      // std::function<void(Iupperlayer_comm_ops*)> handler_end_connection;
 };
 
 /**
  * @brief The scp_connection class represents a single association between the
  *        scp and a remote scu.
  */
-class scp_connection: public Connection
-{
-   public:
-    scp_connection(Iinfrastructure_upperlayer_connection* tcp_conn,
-                   data::dictionary::dictionaries& dict,
-                   std::function<void(Iupperlayer_comm_ops*)> handler_new_conn,
-                   std::function<void(Iupperlayer_comm_ops*)> handler_end_conn,
-                   std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
-                   std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l = {{}}):
-        Connection {dict, on_error, l},
-        conn {tcp_conn},
-        artim {conn->timeout_timer(std::chrono::seconds(10), [this](){ artim_expired(); })}
-    {
-        handler_new_connection = handler_new_conn;
-        handler_end_connection = handler_end_conn;
-        artim->cancel();
-        statem.transition(statemachine::EVENT::TRANS_CONN_INDIC);
-        handler_new_connection(this);
-        do_read();
-    }
+// class scp_connection: public Connection
+// {
+//    public:
+//     scp_connection(Iinfrastructure_upperlayer_connection* tcp_conn,
+//                    data::dictionary::dictionaries& dict,
+//                    std::function<void(Iupperlayer_comm_ops*)> handler_new_conn,
+//                    std::function<void(Iupperlayer_comm_ops*)> handler_end_conn,
+//                    std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
+//                    std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l = {{}}):
+//         Connection {dict, on_error, l},
+//         conn {tcp_conn},
+//         artim {conn->timeout_timer(std::chrono::seconds(10), [this](){ artim_expired(); })}
+//     {
+//         // handler_new_connection = handler_new_conn;
+//         // handler_end_connection = handler_end_conn;
+//         artim->cancel();
+//         statem.transition(StateMachine::EVENT::TRANS_CONN_INDIC);
+//         // handler_new_connection(this);
+//         do_read();
+//     }
 
-      scp_connection(const scp_connection&) = delete;
-      scp_connection& operator=(const scp_connection&) = delete;
+//       scp_connection(const scp_connection&) = delete;
+//       scp_connection& operator=(const scp_connection&) = delete;
 
-   private:
-      Iinfrastructure_upperlayer_connection* conn;
+//    private:
+//       Iinfrastructure_upperlayer_connection* conn;
 
-       Iinfrastructure_timeout_connection* artim_timer() override
-       {
-           return artim.get();
-       }
+//        Iinfrastructure_timeout_connection* artim_timer() override
+//        {
+//            return artim.get();
+//        }
 
-      std::unique_ptr<Iinfrastructure_timeout_connection> artim;
+//       std::unique_ptr<Iinfrastructure_timeout_connection> artim;
 
-   protected:
-      virtual Iinfrastructure_upperlayer_connection* connection() override { return conn; }
-};
+//    protected:
+//       virtual Iinfrastructure_upperlayer_connection* connection() override { return conn; }
+// };
 
-/**
- * @brief The scu_connection class represents a single associaton between the
- *        local scu and the remote scp.
- */
-class scu_connection: public Connection
-{
-   public:
-    scu_connection(Iinfrastructure_upperlayer_connection* conn,
-                   data::dictionary::dictionaries& dict,
-                   a_associate_rq& rq,
-                   std::function<void(Iupperlayer_comm_ops*)> handler_new_conn,
-                   std::function<void(Iupperlayer_comm_ops*)> handler_end_conn,
-                   std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
-                   std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l = {{}}):
-        Connection {dict, on_error, l},
-        conn {conn},
-        artim {conn->timeout_timer(std::chrono::seconds(10), [this](){ artim_expired(); })}
-    {
-        handler_new_connection = handler_new_conn;
-        handler_end_connection = handler_end_conn;
-        statem.transition(statemachine::EVENT::A_ASSOCIATE_RQ);
+// /**
+//  * @brief The scu_connection class represents a single associaton between the
+//  *        local scu and the remote scp.
+//  */
+// class scu_connection: public Connection
+// {
+//    public:
+//     scu_connection(Iinfrastructure_upperlayer_connection* conn,
+//                    data::dictionary::dictionaries& dict,
+//                    a_associate_rq& rq,
+//                    std::function<void(Iupperlayer_comm_ops*)> handler_new_conn,
+//                    std::function<void(Iupperlayer_comm_ops*)> handler_end_conn,
+//                    std::function<void(Iupperlayer_comm_ops*, std::exception_ptr)> on_error,
+//                    std::vector<std::pair<TYPE, std::function<void(Connection*, std::unique_ptr<property>)>>> l = {{}}):
+//         Connection {dict, on_error, l},
+//         conn {conn},
+//         artim {conn->timeout_timer(std::chrono::seconds(10), [this](){ artim_expired(); })}
+//     {
+//         handler_new_connection = handler_new_conn;
+//         handler_end_connection = handler_end_conn;
+//         statem.transition(StateMachine::EVENT::A_ASSOCIATE_RQ);
 
-        statem.transition(statemachine::EVENT::TRANS_CONN_CONF);
+//         statem.transition(StateMachine::EVENT::TRANS_CONN_CONF);
 
-        handler_new_connection(this);
+//         handler_new_connection(this);
 
-        auto pdu = std::make_shared<std::vector<unsigned char>>(rq.make_pdu());
-        //this->queue_for_write(std::unique_ptr<property>(new a_associate_rq {rq}));/*
-        conn->write_data(pdu, [this, pdu, &rq](const boost::system::error_code& err, std::size_t) mutable {
-            try
-            {
-                if (!err) {
-                    auto type = TYPE::A_ASSOCIATE_RQ;
-                    BOOST_LOG_SEV(logger, info) << "Sent property of type " << type;
-                    BOOST_LOG_SEV(logger, debug) << "Property info: \n" << rq;
-                    if (handlers_conf.find(type) != handlers_conf.end()) {
-                        handlers_conf[type](this, &rq);
-                    }
-                    do_read();
-                } else {
-                    throw boost::system::system_error(err);
-                }
-            } catch (std::exception& excep) {
-                // BOOST_LOG_SEV(logger, error) << "Error occured writing initial a_associate_rq\n"
-                //                              << excep.what();
-                error_handler(this, std::current_exception());
-            }
-        });
-    }
+//         auto pdu = std::make_shared<std::vector<unsigned char>>(rq.make_pdu());
+//         //this->queue_for_write(std::unique_ptr<property>(new a_associate_rq {rq}));/*
+//         conn->write_data(pdu, [this, pdu, &rq](const boost::system::error_code& err, std::size_t) mutable {
+//             try
+//             {
+//                 if (!err) {
+//                     auto type = TYPE::A_ASSOCIATE_RQ;
+//                     BOOST_LOG_SEV(logger, info) << "Sent property of type " << type;
+//                     BOOST_LOG_SEV(logger, debug) << "Property info: \n" << rq;
+//                     if (handlers_conf.find(type) != handlers_conf.end()) {
+//                         handlers_conf[type](this, &rq);
+//                     }
+//                     do_read();
+//                 } else {
+//                     throw boost::system::system_error(err);
+//                 }
+//             } catch (std::exception& excep) {
+//                 // BOOST_LOG_SEV(logger, error) << "Error occured writing initial a_associate_rq\n"
+//                 //                              << excep.what();
+//                 error_handler(this, std::current_exception());
+//             }
+//         });
+//     }
 
-      scu_connection(const scu_connection&) = delete;
-      scu_connection& operator=(const scu_connection&) = delete;
+//       scu_connection(const scu_connection&) = delete;
+//       scu_connection& operator=(const scu_connection&) = delete;
 
-   private:
-      Iinfrastructure_upperlayer_connection* conn;
+//    private:
+//       Iinfrastructure_upperlayer_connection* conn;
 
-       Iinfrastructure_timeout_connection* artim_timer() override
-       {
-           return artim.get();
-       }
+//        Iinfrastructure_timeout_connection* artim_timer() override
+//        {
+//            return artim.get();
+//        }
 
-      std::unique_ptr<Iinfrastructure_timeout_connection> artim;
+//       std::unique_ptr<Iinfrastructure_timeout_connection> artim;
 
-   protected:
-      virtual Iinfrastructure_upperlayer_connection* connection() override { return conn; }
-};
+//    protected:
+//       virtual Iinfrastructure_upperlayer_connection* connection() override { return conn; }
+// };
 
 }
 

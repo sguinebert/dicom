@@ -40,7 +40,7 @@ Iinfrastructure_upperlayer_connection::~Iinfrastructure_upperlayer_connection()
 tcpconnection::tcpconnection(asio::io_context& ctx,
                                          std::shared_ptr<boost::asio::ip::tcp::socket> sock,
                              std::function<void(tcpconnection*)> on_end_connection):
-    ctx_ {ctx},
+    context_ {ctx},
     socket_(ctx),
     skt {sock},
    handler_end_connection {on_end_connection}
@@ -75,12 +75,12 @@ void tcpconnection::read_data(std::shared_ptr<std::vector<unsigned char>> buffer
 
 std::unique_ptr<Iinfrastructure_timeout_connection> tcpconnection::timeout_timer(std::chrono::duration<int> timeout, std::function<void()> on_timeout)
 {
-    return std::unique_ptr<Iinfrastructure_timeout_connection> { new timeout_connection {ctx_, timeout, on_timeout}};
+    return std::unique_ptr<Iinfrastructure_timeout_connection> { new timeout_connection {context_, timeout, on_timeout}};
 }
 
 void tcpconnection::close()
 {
-    ctx_.post([this]() {
+    context_.post([this]() {
         skt->shutdown(boost::asio::ip::tcp::socket::shutdown_both);
         skt->close();
       handler_end_connection(this);

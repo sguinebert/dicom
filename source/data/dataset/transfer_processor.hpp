@@ -212,7 +212,7 @@ class transfer_processor
            for (auto attr : dataset_iterator_adaptor(dataset)) {
                if (attr.first == SequenceDelimitationItem) {
                    if (!explicit_length_sequence) {
-                       auto tag = encode_tag(attr.first, endianness);
+                       auto tag = convhelper::encode_tag(attr.first, endianness);
                        auto len = encode_len(4, attr.second.value_len, endianness);
                        stream.insert(stream.end(), tag.begin(), tag.end());
                        stream.insert(stream.end(), len.begin(), len.end());
@@ -220,14 +220,14 @@ class transfer_processor
                    continue;
                } else if (attr.first == ItemDelimitationItem) {
                    if (!explicit_length_item)  {
-                       auto tag = encode_tag(attr.first, endianness);
+                       auto tag = convhelper::encode_tag(attr.first, endianness);
                        auto len = encode_len(4, attr.second.value_len, endianness);
                        stream.insert(stream.end(), tag.begin(), tag.end());
                        stream.insert(stream.end(), len.begin(), len.end());
                    }
                    continue;
                } else if (attr.first == Item) {
-                   auto tag = encode_tag(attr.first, endianness);
+                   auto tag = convhelper::encode_tag(attr.first, endianness);
                    auto len = encode_len(4, attr.second.value_len, endianness);
                    stream.insert(stream.end(), tag.begin(), tag.end());
                    stream.insert(stream.end(), len.begin(), len.end());
@@ -260,7 +260,7 @@ class transfer_processor
                    }
                }
 
-               auto tag = encode_tag(attr.first, endianness);
+               auto tag = convhelper::encode_tag(attr.first, endianness);
                std::vector<unsigned char> len;
                stream.insert(stream.end(), tag.begin(), tag.end());
                if (vrtype == VR_TYPE::EXPLICIT) {
@@ -331,7 +331,7 @@ class transfer_processor
                   auto& pos = positions.top();
                   assert(!current_sequence.top().empty());
 
-                  tag_type tag = decode_tag(data, pos, endianness);
+                  tag_type tag = convhelper::decode_tag(data, pos, endianness);
                   pos += 4;
 
                   VR repr = deserialize_VR(data, tag, pos);
@@ -561,7 +561,7 @@ class transfer_processor
 
           while (!beginnings.empty() && pos < data.size()) {
               //pos = beginnings.top();
-              tag_type tag = decode_tag(data, pos, endianness);
+              tag_type tag = convhelper::decode_tag(data, pos, endianness);
               if (tag == SequenceDelimitationItem || tag == ItemDelimitationItem) {
                   pos += 8;
                   beginnings.pop();
@@ -873,7 +873,7 @@ class encapsulated: public little_endian_explicit
       attribute::encapsulated deserialize_fragments(std::vector<unsigned char>& data, std::size_t pos, std::size_t& outsize) const
       {
           attribute::encapsulated encapsulated_data;
-          tag_type tag = decode_tag(data, pos, ENDIANNESS::LITTLE);
+          tag_type tag = convhelper::decode_tag(data, pos, ENDIANNESS::LITTLE);
           std::size_t beg = pos;
 
           pos += 4;
@@ -892,7 +892,7 @@ class encapsulated: public little_endian_explicit
                       pos += item_length;
 
                       // read the next tag
-                      tag = decode_tag(data, pos, endianness);
+                      tag = convhelper::decode_tag(data, pos, endianness);
                   }
                   pos += 4;
                   pos += 4;
@@ -914,7 +914,7 @@ class encapsulated: public little_endian_explicit
                           next = beg + deserialize_length(data, tag, VR::NI, nextpos) + offset_table_length;
                       }
                       while (itempos < next || i == length-4) {
-                          tag = decode_tag(data, itempos, endianness);
+                          tag = convhelper::decode_tag(data, itempos, endianness);
                           if (tag == SequenceDelimitationItem) {
                               pos = itempos;
                               break;
@@ -933,7 +933,7 @@ class encapsulated: public little_endian_explicit
                   }
 
                   // attempt reading sequence delimitation item
-                  tag = decode_tag(data, pos, endianness);
+                  tag = convhelper::decode_tag(data, pos, endianness);
                   pos += 4;
                   if (tag != SequenceDelimitationItem) {
                       // print warning or error
@@ -971,7 +971,7 @@ class encapsulated: public little_endian_explicit
               }
 
               auto offset_table_entries = encode_len(4, offset_table.size(), endianness);
-              auto item_tag = encode_tag(Item, endianness);
+              auto item_tag = convhelper::encode_tag(Item, endianness);
               encapsulated_data.insert(encapsulated_data.end(), std::begin(item_tag), std::end(item_tag));
               encapsulated_data.insert(encapsulated_data.end(), std::begin(offset_table_entries), std::end(offset_table_entries));
 
@@ -981,7 +981,7 @@ class encapsulated: public little_endian_explicit
               for (std::size_t i=0; i<data.fragment_count(); ++i) {
                   const auto& fragment = data.get_fragment(i);
 
-                  auto item_tag = encode_tag(Item, endianness);
+                  auto item_tag = convhelper::encode_tag(Item, endianness);
                   encapsulated_data.insert(encapsulated_data.end(), std::begin(item_tag), std::end(item_tag));
                   auto frag_len = encode_len(4, fragment.size(), endianness);
                   encapsulated_data.insert(encapsulated_data.end(), std::begin(frag_len), std::end(frag_len));
@@ -989,7 +989,7 @@ class encapsulated: public little_endian_explicit
               }
 
               // sequence delimitation item
-              auto seq_del = encode_tag(SequenceDelimitationItem, endianness);
+              auto seq_del = convhelper::encode_tag(SequenceDelimitationItem, endianness);
               auto zero_len = encode_len(4, 0, endianness);
               encapsulated_data.insert(encapsulated_data.end(), std::begin(seq_del), std::end(seq_del));
               encapsulated_data.insert(encapsulated_data.end(), std::begin(zero_len), std::end(zero_len));
@@ -998,14 +998,14 @@ class encapsulated: public little_endian_explicit
 
               // write empty basic offset table
               auto offset_table_entries = encode_len(4, 0, endianness);
-              auto item_tag = encode_tag(Item, endianness);
+              auto item_tag = convhelper::encode_tag(Item, endianness);
               encapsulated_data.insert(encapsulated_data.end(), std::begin(item_tag), std::end(item_tag));
               encapsulated_data.insert(encapsulated_data.end(), std::begin(offset_table_entries), std::end(offset_table_entries));
 
               for (std::size_t i=0; i<data.fragment_count(); ++i) {
                   const auto& fragment = data.get_fragment(i);
 
-                  auto item_tag = encode_tag(Item, endianness);
+                  auto item_tag = convhelper::encode_tag(Item, endianness);
                   encapsulated_data.insert(encapsulated_data.end(), std::begin(item_tag), std::end(item_tag));
                   auto frag_len = encode_len(4, fragment.size(), endianness);
                   encapsulated_data.insert(encapsulated_data.end(), std::begin(frag_len), std::end(frag_len));
@@ -1013,7 +1013,7 @@ class encapsulated: public little_endian_explicit
               }
 
               // sequence delimitation item
-              auto seq_del = encode_tag(SequenceDelimitationItem, endianness);
+              auto seq_del = convhelper::encode_tag(SequenceDelimitationItem, endianness);
               auto zero_len = encode_len(4, 0, endianness);
               encapsulated_data.insert(encapsulated_data.end(), std::begin(seq_del), std::end(seq_del));
               encapsulated_data.insert(encapsulated_data.end(), std::begin(zero_len), std::end(zero_len));

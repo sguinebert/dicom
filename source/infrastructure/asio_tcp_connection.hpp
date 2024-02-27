@@ -133,7 +133,7 @@ class tcpconnection : public std::enable_shared_from_this<tcpconnection>, public
 {
    public:
     tcpconnection(asio::io_context& ctx) :
-           ctx_(ctx),
+           context_(ctx),
            socket_(ctx)
        {}
 
@@ -159,7 +159,7 @@ class tcpconnection : public std::enable_shared_from_this<tcpconnection>, public
 
       bool is_stopped() const override
       {
-          return ctx_.stopped();
+          return context_.stopped();
       }
 
       void close() override;
@@ -185,15 +185,14 @@ class tcpconnection : public std::enable_shared_from_this<tcpconnection>, public
 
       void start(std::shared_ptr<tcpconnection> sft)
       {
-          co_spawn(ctx_, run(sft->shared_from_this()), asio::detached);
+          co_spawn(context_, run(sft->shared_from_this()), asio::detached);
       }
 
       asio::ip::tcp::socket& socket() { return socket_; }
 
     private:
-      asio::io_context& ctx_;
+      asio::io_context& context_;
       asio::ip::tcp::socket socket_;
-      std::shared_ptr<boost::asio::ip::tcp::socket> skt;
 
       std::vector<unsigned char> buffer_;
 
